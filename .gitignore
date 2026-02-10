@@ -1,0 +1,27 @@
+.env
+.env.*
+!.env.example
+
+*.txt
+*secret*
+*password*
+*apikey*
+*api_key*
+
+# Python cache and virtual env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Frontend build deps/artifacts
+frontend/node_modules/
+frontend/dist/
+
+# Large local model artifacts (exceeds GitHub file limit)
+app/models/
+
+# Local experiment outputs / media (optional data, keep repo lightweight)
+8+8/
+實驗中期結果/
+最終實驗結果/

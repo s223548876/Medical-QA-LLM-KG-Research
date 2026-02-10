@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Medical QA Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 24px;
+            max-width: 980px;
+        }
+
+        .box {
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 16px;
+            margin-top: 12px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 90px;
+            padding: 10px;
+            font-size: 14px;
+        }
+
+        button {
+            padding: 10px 14px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .small {
+            color: #666;
+            font-size: 13px;
+        }
+
+        .row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .col {
+            flex: 1;
+        }
+
+        .topic-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+        }
+
+        .topic-table th,
+        .topic-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            vertical-align: top;
+        }
+
+        .topic-table th {
+            background: #f7f7f7;
+            text-align: left;
+        }
+
+        .topic-pill {
+            display: inline-block;
+            margin: 4px 6px 4px 0;
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            border-radius: 999px;
+            cursor: pointer;
+        }
+
+        .topic-pill:hover {
+            background: #f3f3f3;
+        }
+
+        details {
+            margin-top: 10px;
+        }
+
+        summary {
+            cursor: pointer;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>Medical QA Research</h2>
+    <p class="small">
+        僅供研究評估之用，不構成醫療建議。此示範會將您的輸入與我們題庫中最接近的問題進行比對。
+        您可以詢問疾病定義、症狀、治療方式。
+    </p>
+
+    <div class="box">
+        <details open>
+            <summary>可詢問的 35 個 Topics（點一下自動帶入範例問題）</summary>
+            <div class="small" style="margin-top:6px;">
+                建議先點選一個 topic，再修改成你想問的中文句子（例如：什麼是___ / 有哪些症狀 / 要怎麼治療）。
+            </div>
+
+            <table class="topic-table">
+                <thead>
+                    <tr>
+                        <th style="width: 15%;">Topic</th>
+                        <th>可點選範例（會自動填入輸入框）</th>
+                    </tr>
+                </thead>
+                <tbody id="topicTableBody"></tbody>
+            </table>
+        </details>
+        <strong>請輸入問題:</strong>
+        <textarea id="questionInput" placeholder="e.g. 什麼是高血壓?"></textarea>
+        <div style="margin-top:10px;">
+            <button id="askButton">送出</button>
+            <button id="surveyButton">打開問卷</button>
+        </div>
+        <div id="status" class="small" style="margin-top:10px;"></div>
+    </div>
+
+    <div id="resultBox" class="box" style="display:none;">
+        <div class="small" id="mappedInfo"></div>
+        <div class="row" style="margin-top:10px;">
+            <div class="col box">
+                <h4 id="labelA">Answer A</h4>
+                <pre id="answerA"></pre>
+            </div>
+            <div class="col box">
+                <h4 id="labelB">Answer B</h4>
+                <pre id="answerB"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/config.js"></script>
+    <script>
+        const APP_CONFIG = window.__CONFIG__ || {};
+        const API_BASE_URL = (APP_CONFIG.API_BASE_URL || window.location.origin).replace(/\/+$/, "");
+        const API_KEY = (APP_CONFIG.API_KEY || "").trim();
+
+        const TOPICS = [
+            { display: "氣喘（Asthma）", key: "Asthma" },
+            { display: "糖尿病（Diabetes）", key: "Diabetes" },
+            { display: "心臟病（Heart disease）", key: "Heart disease" },
+            { display: "高血壓（Hypertension）", key: "Hypertension" },
+            { display: "流感（Influenza）", key: "Influenza" },
+            { display: "結核病（Tuberculosis）", key: "Tuberculosis" },
+            { display: "癌症（Cancer）", key: "Cancer" },
+            { display: "中風（Stroke）", key: "Stroke" },
+            { display: "阿茲海默症（Alzheimer's disease）", key: "Alzheimer's disease" },
+            { display: "帕金森氏症（Parkinson's disease）", key: "Parkinson's disease" },
+            { display: "慢性腎臟病（Chronic kidney disease）", key: "Chronic kidney disease" },
+            { display: "骨質疏鬆（Osteoporosis）", key: "Osteoporosis" },
+            { display: "憂鬱症（Depression）", key: "Depression" },
+            { display: "焦慮疾患（Anxiety disorders）", key: "Anxiety disorders" },
+            { display: "肥胖（Obesity）", key: "Obesity" },
+            { display: "肺炎（Pneumonia）", key: "Pneumonia" },
+            { display: "肝炎（Hepatitis）", key: "Hepatitis" },
+            { display: "HIV／愛滋病（HIV/AIDS）", key: "HIV/AIDS" },
+            { display: "新冠肺炎（COVID-19）", key: "COVID-19" },
+            { display: "過敏（Allergies）", key: "Allergies" },
+            { display: "關節炎（Arthritis）", key: "Arthritis" },
+            { display: "偏頭痛（Migraine）", key: "Migraine" },
+            { display: "癲癇（Epilepsy）", key: "Epilepsy" },
+            { display: "貧血（Anemia）", key: "Anemia" },
+            { display: "甲狀腺疾病（Thyroid disorders）", key: "Thyroid disorders" },
+            { display: "皮膚癌（Skin cancer）", key: "Skin cancer" },
+            { display: "乳癌（Breast cancer）", key: "Breast cancer" },
+            { display: "子宮頸癌（Cervical cancer）", key: "Cervical cancer" },
+            { display: "白血病（Leukemia）", key: "Leukemia" },
+            { display: "睡眠呼吸中止症（Sleep apnea）", key: "Sleep apnea" },
+            { display: "胃食道逆流（GERD）", key: "GERD" },
+            { display: "腸躁症（Irritable bowel syndrome）", key: "Irritable bowel syndrome" },
+            { display: "乳糜瀉（Celiac disease）", key: "Celiac disease" },
+            { display: "瘧疾（Malaria）", key: "Malaria" },
+            { display: "慢性阻塞性肺病（Chronic obstructive pulmonary disease）", key: "Chronic obstructive pulmonary disease" },
+        ];
+
+        let selectedTopicKey = null;
+        let selectedQtype = null;
+
+        // 三種常見問法（中文）
+        const QUESTION_TEMPLATES = [
+            { qtype: "definition", make: (topicDisplay) => `什麼是${topicDisplay}？` },
+            { qtype: "symptoms", make: (topicDisplay) => `${topicDisplay}有哪些症狀？` },
+            { qtype: "treatments", make: (topicDisplay) => `${topicDisplay}要怎麼治療？` }
+        ];
+
+        function fillQuestion(text) {
+            const input = document.getElementById("questionInput");
+            input.value = text;
+            input.focus();
+            input.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+
+        function renderTopicTable() {
+            const tbody = document.getElementById("topicTableBody");
+            if (!tbody) return;
+
+            tbody.innerHTML = "";
+
+            TOPICS.forEach((topic) => {
+                const row = document.createElement("tr");
+
+                const tdTopic = document.createElement("td");
+                tdTopic.textContent = topic.display;
+
+                const tdExamples = document.createElement("td");
+                QUESTION_TEMPLATES.forEach((templateObj) => {
+                    const pill = document.createElement("span");
+                    pill.className = "topic-pill";
+
+                    const q = templateObj.make(topic.display);
+                    pill.textContent = q;
+
+                    pill.addEventListener("click", () => {
+                        selectedTopicKey = topic.key;        // ✅ 告訴後端是哪個 topic
+                        selectedQtype = templateObj.qtype;   // ✅ 告訴後端是哪個題型
+                        fillQuestion(q);
+                    });
+
+                    tdExamples.appendChild(pill);
+                });
+
+                row.appendChild(tdTopic);
+                row.appendChild(tdExamples);
+                tbody.appendChild(row);
+            });
+        }
+
+        // 頁面載入後渲染表格
+        renderTopicTable();
+
+        const surveyUrl = "https://forms.gle/d3x6AFRZjCVHX2gu6";
+
+        document.getElementById("surveyButton").addEventListener("click", () => {
+            window.open(surveyUrl, "_blank");
+        });
+
+        document.getElementById("askButton").addEventListener("click", async () => {
+            const question = document.getElementById("questionInput").value.trim();
+            if (!question) return;
+
+            document.getElementById("status").textContent = "正在尋找最相近的問題...";
+            document.getElementById("resultBox").style.display = "none";
+
+            const url = new URL("/demo/search", `${API_BASE_URL}/`);
+            url.searchParams.set("question", question);
+
+            if (selectedTopicKey) url.searchParams.set("topic_key", selectedTopicKey);
+            if (selectedQtype) url.searchParams.set("qtype", selectedQtype);
+
+            const headers = {};
+            if (API_KEY) {
+                headers["X-API-KEY"] = API_KEY;
+            }
+            const response = await fetch(url.toString(), { headers });
+            const data = await response.json();
+
+            if (!data.matched) {
+                document.getElementById("status").textContent = `${data.message || "Not matched"} (similarity=${data.similarity ?? "n/a"})`;
+                return;
+            }
+
+            document.getElementById("status").textContent = `已配對（相似度：${data.similarity}）`;
+            document.getElementById("mappedInfo").textContent =
+                `Mapped to: [${data.mapped_to.bank_id}] (${data.mapped_to.qtype}) ${data.mapped_to.question}`;
+
+            document.getElementById("labelA").textContent = data.answers.a_label;
+            document.getElementById("answerA").textContent = data.answers.a_text || "";
+
+            document.getElementById("labelB").textContent = data.answers.b_label;
+            document.getElementById("answerB").textContent = data.answers.b_text || "";
+
+            document.getElementById("resultBox").style.display = "block";
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  # 1. 醫療知識圖譜資料庫
+  neo4j:
+    image: neo4j:5.23.1
+    container_name: medical-kg-neo4j
+    ports:
+      - "7474:7474" # Web 界面
+      - "7687:7687" # Bolt 協議
+    env_file:
+      - .env
+    volumes:
+      - ./neo4j/data:/data
+      - ./neo4j/import:/import # 用於放入 CSV 匯入圖譜
+
+  # 2. 醫療問答主程式
+  app:
+    build: .
+    container_name: medical-rag-app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - neo4j
+    env_file:
+      - .env
