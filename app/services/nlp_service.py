@@ -18,7 +18,21 @@ ALIASES = {
     "tb": "tuberculosis",
     "copd": "chronic obstructive pulmonary disease",
     "high blood pressure": "hypertension",
+    "gerd": "gastroesophageal reflux disease",
+    "covid-19": "covid 19",
+    "covid19": "covid 19",
 }
+
+NOISE_TERMS = {
+    "what", "which", "who", "where", "when", "why", "how",
+    "is", "are", "was", "were", "be", "to", "do", "does", "did",
+    "a", "an", "the", "of", "for", "with", "and", "or", "in", "on",
+    "symptom", "symptoms", "sign", "signs",
+    "treat", "treated", "treating", "treatment", "treatments", "therapy", "management",
+    "definition", "define", "disease", "disorder", "condition",
+}
+
+_LATIN_TERM_RE = re.compile(r"[A-Za-z][A-Za-z0-9'/-]*(?:\s+[A-Za-z0-9'/-]+){0,4}")
 
 # 針對症狀與治療的關鍵詞線索
 _SYM_HINTS = {"itching", "swelling", "dizziness", "weakness", "fatigue", "chills",
@@ -251,10 +265,55 @@ def overlap_ratio(q: str, pairs: list[str], topn: int = 8) -> float:
 
 
 def extract_terms(text: str) -> List[str]:
+    raw = []
     doc = nlp(text)
-    raw = set(ent.text.lower() for ent in doc.ents)
-    mapped = {ALIASES.get(t, t) for t in raw}
-    return list(mapped)
+    for ent in doc.ents:
+        raw.append(ent.text.lower().strip())
+
+    # Mixed Chinese/English prompts from frontend templates often keep disease names in Latin script.
+    for m in _LATIN_TERM_RE.finditer(text or ""):
+        raw.append(m.group(0).lower().strip())
+
+    return merge_terms(raw)
+
+
+def merge_terms(seed_terms: list[str] | None, base_terms: list[str] | None = None, max_terms: int = 5) -> List[str]:
+    merged: list[str] = []
+    for src in (seed_terms or []), (base_terms or []):
+        for item in src:
+            t = (item or "").lower().strip()
+            if not t:
+                continue
+            t = t.replace("（", "(").replace("）", ")").strip(" \t\r\n.,;:!?\"'()[]{}")
+            mapped = ALIASES.get(t, t)
+            for cand in [mapped] + [p.strip() for p in re.split(r"[()/]", mapped) if p.strip()]:
+                if is_noise_term(cand):
+                    continue
+                if cand not in merged:
+                    merged.append(cand)
+                if len(merged) >= max_terms:
+                    return merged
+    return merged
+
+
+def is_noise_term(term: str) -> bool:
+    t = (term or "").lower().strip()
+    if not t:
+        return True
+    if t in NOISE_TERMS:
+        return True
+    if len(t) <= 2:
+        return True
+    toks = re.findall(r"[a-z]+", t)
+    if len(toks) > 6:
+        return True
+    if len(toks) >= 3:
+        stop_cnt = sum(1 for tok in toks if tok in NOISE_TERMS)
+        if stop_cnt >= 2:
+            return True
+    if re.fullmatch(r"[0-9\W_]+", t):
+        return True
+    return False
 
 
 _VOCAB_TERMS: list[str] = []
@@ -266,7 +325,7 @@ def ensure_vocab_terms() -> None:
     if _VOCAB_READY:
         return
     try:
-        _VOCAB_TERMS = neo4j_repository.list_vocab_terms(limit=300000)
+        _VOCAB_TERMS = neo4j_repository.list_vocab_terms(limit=100000)
         _VOCAB_READY = True
     except Exception:
         _VOCAB_TERMS = []
@@ -283,10 +342,16 @@ def fuzzy_candidates(term: str, n: int = 5, cutoff: float = 0.82) -> list[str]:
 
 def lookup_concept_ids(term: str) -> List[Dict[str, str]]:
     term = (term or "").strip()
-    if not term:
+    if not term or is_noise_term(term):
         return []
     matches = neo4j_repository.lookup_concept_ids(term)
-    if not matches:
+    toks = re.findall(r"[a-z]+", term.lower())
+    can_fuzzy = (
+        1 <= len(toks) <= 2
+        and len(term) >= 5
+        and not any(tok in NOISE_TERMS for tok in toks)
+    )
+    if not matches and can_fuzzy:
         fuzz_terms = fuzzy_candidates(term, n=5, cutoff=0.82)
         for ft in fuzz_terms:
             more = neo4j_repository.lookup_concept_ids(ft)

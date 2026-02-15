@@ -20,6 +20,7 @@ frontend/dist/
 
 # Large local model artifacts (exceeds GitHub file limit)
 app/models/
+.logs/
 
 # Local experiment outputs / media (optional data, keep repo lightweight)
 8+8/

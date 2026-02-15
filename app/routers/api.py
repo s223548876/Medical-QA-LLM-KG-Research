@@ -41,6 +41,8 @@ def demo_search_get(
     return query_service.demo_search_compat_response(
         request=request,
         question=question,
+        topic_key=topic_key,
+        qtype_hint=qtype,
         lite=lite,
         max_k=max_k,
         model=model,
@@ -55,6 +57,8 @@ def demo_search_post(request: Request, payload: Dict = Body(default={})):
     return query_service.demo_search_compat_response(
         request=request,
         question=question,
+        topic_key=(payload or {}).get("topic_key"),
+        qtype_hint=(payload or {}).get("qtype"),
         lite=int((payload or {}).get("lite", 0) or 0),
         max_k=int((payload or {}).get("max_k", 1) or 1),
         model=(payload or {}).get("model"),

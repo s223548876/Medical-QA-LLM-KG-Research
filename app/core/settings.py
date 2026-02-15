@@ -23,10 +23,12 @@ class Settings(BaseModel):
         origins = [o.strip() for o in origins_raw.split(",") if o.strip()]
         return cls(
             OPENAI_API_KEY=os.getenv("OPENAI_API_KEY", ""),
-            NEO4J_URI=os.getenv("NEO4J_URI", "bolt://host.docker.internal:7687"),
+            NEO4J_URI=os.getenv(
+                "NEO4J_URI", "bolt://host.docker.internal:7687"),
             NEO4J_USER=os.getenv("NEO4J_USER", "neo4j"),
             NEO4J_PASSWORD=os.getenv("NEO4J_PASSWORD", ""),
-            OLLAMA_BASE_URL=os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434"),
+            OLLAMA_BASE_URL=os.getenv(
+                "OLLAMA_BASE_URL", "http://host.docker.internal:11434"),
             APP_API_KEY=os.getenv("APP_API_KEY", ""),
             FRONTEND_ORIGINS=origins,
         )
