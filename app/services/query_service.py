@@ -11,6 +11,82 @@ from services import nlp_service, prompt_builder
 
 ENABLE_FALLBACK = True
 ENABLE_LOW_OVERLAP = False
+SECTION_MARKERS = [
+    "\n[一般性補充",
+    "\n## 一般性補充",
+    "\n一般性補充：",
+]
+
+
+def _ensure_user_sections(answer: str) -> str:
+    text = (answer or "").strip()
+    if not text:
+        return text
+    second_title = "[一般性補充（LLM 常識，非知識圖譜證據）]"
+    text = re.sub(r"\[\s*一般性補充（?\s*非\s*Evidence\s*）?\s*\]", second_title, text, flags=re.I)
+    text = re.sub(r"^\s*一般性補充：", second_title, text, flags=re.I | re.M)
+
+    split_match = re.search(
+        r"(?:^|\n)(?:\[\s*一般性補充[^\]]*\]|##\s*一般性補充|一般性補充：)",
+        text,
+        flags=re.I,
+    )
+    if split_match:
+        first = text[:split_match.start()].strip()
+        second = text[split_match.end():].strip()
+    else:
+        first = text
+        second = "- 目前資料不足，請結合臨床評估與醫師建議。"
+
+    first = re.sub(r"^\[?根據知識圖譜\]?\s*[-:：]?\s*", "", first)
+    first = re.sub(r"\[\s*一般性補充[^\]]*\]", "", first, flags=re.I).strip()
+
+    second = re.sub(r"^\s*[-:：]\s*", "", second).strip()
+    second_lines = [line.strip() for line in second.splitlines() if line.strip()]
+    if len(second_lines) > 3:
+        second = "\n".join(second_lines[:3])
+    elif second_lines:
+        second = "\n".join(second_lines)
+    if second and not second.startswith(("-", "1.", "1、", "1)")):
+        second = f"- {second}"
+
+    return f"[根據知識圖譜]\n{first}\n\n{second_title}\n{second}"
+
+
+def _finalize_research_answer(text: str) -> str:
+    output = (text or "").strip()
+    if not output:
+        return output
+
+    output = re.sub(r"[（(]\s*非\s*Evidence\s*[）)]", "", output, flags=re.I)
+    output = re.sub(r"[（(]\s*Non[- ]?Evidence\s*[）)]", "", output, flags=re.I)
+
+    section_idx = -1
+    for marker in SECTION_MARKERS:
+        idx = output.find(marker)
+        if idx != -1 and (section_idx == -1 or idx < section_idx):
+            section_idx = idx
+    if section_idx != -1:
+        output = output[:section_idx].rstrip()
+    return output
+
+
+def _finalize_answer_by_mode(answer: str, mode: str) -> str:
+    if mode == "user":
+        return _ensure_user_sections(answer)
+    if mode == "research":
+        return _finalize_research_answer(answer)
+    return answer
+
+
+def _research_insufficient_answer(qtype: str, evidence_level: str, pairs: list[str]) -> str:
+    facet_name = {"symptoms": "症狀", "treatments": "治療"}.get(qtype, "此題型")
+    narrative = prompt_builder.build_evidence_narrative(pairs)
+    if evidence_level == "weak":
+        limitation = f"目前知識圖譜對「{facet_name}」僅有分類定位，缺乏直接證據，暫不提供具體{facet_name}清單。"
+    else:
+        limitation = f"目前知識圖譜對「{facet_name}」沒有可用直接證據，暫不提供具體{facet_name}內容。"
+    return f"{narrative}\n{limitation}"
 
 
 def _normalize_term(t: str) -> str:
@@ -22,6 +98,10 @@ def _normalize_term(t: str) -> str:
     s = s.replace("(disorder)", "").replace("(finding)", "").replace("(procedure)", "")
     s = s.replace("  ", " ").strip(" -_;:,")
     return " ".join(s.split())
+
+
+def _normalize_lookup_term(term: str) -> str:
+    return " ".join((term or "").strip().lower().split())
 
 
 def _natural_lite_answer(question: str, pairs: list[str], qtype: str) -> str:
@@ -98,6 +178,16 @@ def _natural_lite_answer(question: str, pairs: list[str], qtype: str) -> str:
 
 
 def generate_answer(question: str, subgraph: list, lite: int = 0, qtype: str = "definition") -> str:
+    return generate_answer_with_mode(question=question, subgraph=subgraph, lite=lite, qtype=qtype, mode="research")
+
+
+def generate_answer_with_mode(
+    question: str,
+    subgraph: list,
+    lite: int = 0,
+    qtype: str = "definition",
+    mode: str = "research",
+) -> str:
     if not subgraph:
         return "--找不到足夠的知識圖資訊來回答問題。--"
 
@@ -111,14 +201,33 @@ def generate_answer(question: str, subgraph: list, lite: int = 0, qtype: str = "
     if lite:
         return _natural_lite_answer(question, top_pairs, qtype)
 
-    prompt = prompt_builder.build_prompt_kg(qtype, question, pairs)
+    prompt = prompt_builder.build_prompt_kg_with_mode(
+        qtype=qtype,
+        question=question,
+        pairs=pairs,
+        mode=mode,
+    )
     limits = prompt_builder.facet_limits(qtype)
     return ollama_client.call_llm(prompt, num_predict=limits["num_predict"])
 
 
-def llm_only(request: Request, question: str | None = None, model: str | None = None):
+def llm_only(
+    request: Request,
+    question: str | None = None,
+    model: str | None = None,
+    qtype_hint: str | None = None,
+):
     require_api_key(request, settings)
-    qtype = nlp_service.detect_qtype(question)
+    hint = (
+        qtype_hint
+        or request.query_params.get("qtype_hint")
+        or request.query_params.get("qtype")
+        or ""
+    ).strip().lower()
+    if hint in {"definition", "symptoms", "treatments"}:
+        qtype = hint
+    else:
+        qtype = nlp_service.detect_qtype(question)
     if qtype == "symptoms":
         prompt = f"""你是醫療助理，請以繁體中文回答，約 80 字內。
 
@@ -162,12 +271,16 @@ def query(request: Request,
           question: str,
           topic_key: str | None = None,
           qtype_hint: str | None = None,
+          mode: str = "research",
           lite: int = 0,
           max_k: int = 1,
           model: str | None = None,
           symtx_k: int | None = None,
           no_facet_fallback: int = 0):
     require_api_key(request, settings)
+    mode = (request.query_params.get("mode") or mode or "research").strip().lower()
+    if mode not in {"research", "user"}:
+        mode = "research"
 
     t0 = perf_counter()
     qtype = (qtype_hint or "").strip().lower()
@@ -176,17 +289,31 @@ def query(request: Request,
 
     terms = nlp_service.extract_terms(question)
     if topic_key:
-        terms = nlp_service.merge_terms([topic_key], terms)
+        topic_terms = nlp_service.merge_terms([topic_key], [])
+        topic_norm = _normalize_lookup_term(topic_terms[0] if topic_terms else topic_key)
+        ordered_terms = [topic_norm] + terms
+        seen_norm: set[str] = set()
+        prioritized_terms: list[str] = []
+        for term in ordered_terms:
+            clean_term = (term or "").strip()
+            if not clean_term:
+                continue
+            norm_term = _normalize_lookup_term(clean_term)
+            if norm_term in seen_norm:
+                continue
+            seen_norm.add(norm_term)
+            prioritized_terms.append(clean_term)
+        terms = prioritized_terms
 
     if ENABLE_FALLBACK and not terms:
-        ans = llm_only(request=request, question=question, model=model)["results"][0]["answer"]
+        ans = llm_only(request=request, question=question, model=model, qtype_hint=qtype)["results"][0]["answer"]
         return {
             "question": question, "qtype": qtype, "extracted_terms": [],
             "debug": [{"fallback": "no_terms_to_kg"},
                       {"timing_ms": {"total": int((perf_counter() - t0) * 1000)}}],
             "results": [{
                 "term": None, "conceptId": None, "subgraph_size": 0,
-                "subgraph_summary": [], "answer": ans, "relevance": 0.0
+                "subgraph_summary": [], "answer": _finalize_answer_by_mode(ans, mode), "relevance": 0.0
             }]
         }
 
@@ -213,7 +340,7 @@ def query(request: Request,
     lookup_ms = int((perf_counter() - t_lookup_start) * 1000)
 
     if ENABLE_FALLBACK and not candidates:
-        ans = llm_only(request=request, question=question, model=model)["results"][0]["answer"]
+        ans = llm_only(request=request, question=question, model=model, qtype_hint=qtype)["results"][0]["answer"]
         return {
             "question": question, "qtype": qtype, "extracted_terms": terms,
             "debug": debug_matches + [
@@ -222,7 +349,7 @@ def query(request: Request,
             ],
             "results": [{
                 "term": None, "conceptId": None, "subgraph_size": 0,
-                "subgraph_summary": [], "answer": ans, "relevance": 0.0
+                "subgraph_summary": [], "answer": _finalize_answer_by_mode(ans, mode), "relevance": 0.0
             }]
         }
 
@@ -245,39 +372,66 @@ def query(request: Request,
 
     ratio = nlp_service.overlap_ratio(question, sorted_pairs, topn=8)
     LOW_OVL = 0.008
-    no_facet_hit = (not nlp_service.has_facet_evidence(sorted_pairs, qtype))
+    evidence_level = nlp_service.facet_evidence_level(sorted_pairs, qtype)
+    if qtype in ("symptoms", "treatments"):
+        _, narrative_categories = prompt_builder.extract_condition_categories(sorted_pairs)
+        if len(narrative_categories) < 2:
+            evidence_level = "none"
+    no_facet_hit = evidence_level != "strong"
 
     if ENABLE_FALLBACK and ENABLE_LOW_OVERLAP and no_facet_hit and ratio < LOW_OVL:
-        ans = llm_only(request=request, question=question, model=model)["results"][0]["answer"]
-        note = "facet_llm_only_low_overlap"
+        ans = generate_answer_with_mode(
+            question=question,
+            subgraph=[{"sourceTerm": p.split(" → ")[0], "targetTerm": p.split(" → ")[1]} for p in sorted_pairs],
+            lite=0,
+            qtype=qtype,
+            mode=mode,
+        )
+        note = "kg_low_overlap_limited_evidence"
         return {
             "question": question, "qtype": qtype, "extracted_terms": terms,
-            "debug": debug_matches + [{"fallback": note, "overlap": ratio}],
+            "debug": debug_matches + [{"fallback": note, "overlap": ratio, "facet_evidence_level": evidence_level}],
             "results": [{
                 "term": None, "conceptId": None, "subgraph_size": 0,
                 "subgraph_summary": sorted_pairs[:3],
-                "answer": ans, "relevance": 0.0,
+                "answer": _finalize_answer_by_mode(ans, mode), "relevance": 0.0,
                 "note": note
             }]
         }
 
-    if ENABLE_FALLBACK and (not no_facet_fallback) and qtype in ("symptoms", "treatments") and not nlp_service.has_facet_evidence(sorted_pairs, qtype):
-        ans = llm_only(request=request, question=question, model=model)["results"][0]["answer"]
-        note = "facet_llm_only"
-        fallback_note = "llm_only_due_to_poor_facet_evidence"
+    if ENABLE_FALLBACK and (not no_facet_fallback) and qtype in ("symptoms", "treatments") and evidence_level != "strong":
+        if mode == "research":
+            ans = _research_insufficient_answer(qtype, evidence_level, sorted_pairs)
+            note = f"research_{evidence_level}_evidence_insufficient"
+            fallback_note = f"strategy_a_research_{evidence_level}_insufficient"
+        elif evidence_level == "none":
+            ans = llm_only(request=request, question=question, model=model, qtype_hint=qtype)["results"][0]["answer"]
+            note = "user_mode_llm_only_no_evidence"
+            fallback_note = "strategy_a_user_none_to_llm_only"
+        else:
+            ans = generate_answer_with_mode(
+                question=question,
+                subgraph=[{"sourceTerm": p.split(" → ")[0], "targetTerm": p.split(" → ")[1]} for p in sorted_pairs],
+                lite=0,
+                qtype=qtype,
+                mode=mode,
+            )
+            note = "user_mode_kg_with_weak_evidence"
+            fallback_note = "strategy_a_user_weak_keep_kg"
         return {
             "question": question,
             "qtype": qtype,
             "extracted_terms": terms,
             "debug": debug_matches + [{"fallback": fallback_note,
-                                       "pairs_after_merge": len(combined_pairs)},
+                                       "pairs_after_merge": len(combined_pairs),
+                                       "facet_evidence_level": evidence_level},
                                       {"timing_ms": {"lookup": lookup_ms, "total": int((perf_counter() - t0) * 1000)}}],
             "results": [{
                 "term": topk[0]["term"],
                 "conceptId": topk[0]["conceptId"],
                 "subgraph_size": sum(c["subgraph_size"] for c in topk),
                 "subgraph_summary": sorted_pairs[:3],
-                "answer": ans,
+                "answer": _finalize_answer_by_mode(ans, mode),
                 "relevance": topk[0]["relevance"],
                 "note": note
             }]
@@ -286,13 +440,20 @@ def query(request: Request,
     note = None
     t_gen_start = perf_counter()
     if lite:
-        ans = generate_answer(
-            question,
-            [{"sourceTerm": p.split(" → ")[0], "targetTerm": p.split(" → ")[1]} for p in sorted_pairs],
-            lite=1, qtype=qtype
+        ans = generate_answer_with_mode(
+            question=question,
+            subgraph=[{"sourceTerm": p.split(" → ")[0], "targetTerm": p.split(" → ")[1]} for p in sorted_pairs],
+            lite=1,
+            qtype=qtype,
+            mode=mode,
         )
     else:
-        prompt = prompt_builder.build_prompt_kg(qtype, question, sorted_pairs)
+        prompt = prompt_builder.build_prompt_kg_with_mode(
+            qtype=qtype,
+            question=question,
+            pairs=sorted_pairs,
+            mode=mode,
+        )
         limits = prompt_builder.facet_limits(qtype)
         ans = ollama_client.call_llm(
             prompt,
@@ -300,7 +461,7 @@ def query(request: Request,
             num_predict=limits["num_predict"]
         )
         if ENABLE_FALLBACK and nlp_service.is_bad_answer(ans):
-            ans = llm_only(request=request, question=question, model=model)["results"][0]["answer"]
+            ans = llm_only(request=request, question=question, model=model, qtype_hint=qtype)["results"][0]["answer"]
             note = "fallback_llm_only_after_bad_llm"
     gen_ms = int((perf_counter() - t_gen_start) * 1000)
 
@@ -308,7 +469,7 @@ def query(request: Request,
         "question": question,
         "qtype": qtype,
         "extracted_terms": terms,
-        "debug": debug_matches + [{"timing_ms": {
+        "debug": debug_matches + [{"facet_evidence_level": evidence_level}, {"timing_ms": {
             "lookup": lookup_ms,
             "generation": gen_ms,
             "total": int((perf_counter() - t0) * 1000),
@@ -318,7 +479,7 @@ def query(request: Request,
             "conceptId": topk[0]["conceptId"],
             "subgraph_size": sum(c["subgraph_size"] for c in topk),
             "subgraph_summary": sorted_pairs[:3],
-            "answer": ans,
+            "answer": _finalize_answer_by_mode(ans, mode),
             "relevance": topk[0]["relevance"],
             **({"note": note} if note else {})
         }]
@@ -336,11 +497,16 @@ def demo_search_compat_response(
     symtx_k: int | None = None,
     no_facet_fallback: int = 0
 ):
+    mode = (request.query_params.get("mode", "user") or "user").strip().lower()
+    if mode not in {"user", "research"}:
+        mode = "user"
+
     core = query(
         request=request,
         question=question,
         topic_key=topic_key,
         qtype_hint=qtype_hint,
+        mode=mode,
         lite=lite,
         max_k=max_k,
         model=model,
@@ -349,9 +515,15 @@ def demo_search_compat_response(
     )
 
     first = ((core.get("results") or [{}])[0] or {})
-    answer_b = first.get("answer", "")
-    concept_id = first.get("conceptId")
     qtype = core.get("qtype")
+    answer_kg = first.get("answer", "")
+    answer_llm = llm_only(
+        request=request,
+        question=question,
+        model=model,
+        qtype_hint=(qtype_hint or qtype),
+    )["results"][0]["answer"]
+    concept_id = first.get("conceptId")
 
     resp = dict(core)
     resp.update({
@@ -364,9 +536,9 @@ def demo_search_compat_response(
         },
         "answers": {
             "a_label": "知識圖譜 + LLM",
-            "a_text": answer_b,
+            "a_text": answer_kg,
             "b_label": "純 LLM",
-            "b_text": answer_b
+            "b_text": answer_llm
         }
     })
     return resp

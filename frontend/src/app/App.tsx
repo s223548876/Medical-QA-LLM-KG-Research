@@ -80,6 +80,7 @@ function App() {
 
       const kgUrl = new URL('/demo/search', `${config.apiBaseUrl}/`);
       kgUrl.searchParams.set('question', queryText);
+      kgUrl.searchParams.set('mode', viewMode);
       if (topicKey) {
         kgUrl.searchParams.set('topic_key', topicKey);
       }

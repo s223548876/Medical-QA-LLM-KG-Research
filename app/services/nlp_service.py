@@ -21,6 +21,10 @@ ALIASES = {
     "gerd": "gastroesophageal reflux disease",
     "covid-19": "covid 19",
     "covid19": "covid 19",
+    "高血壓": "hypertension",
+    "糖尿病": "diabetes mellitus",
+    "氣喘": "asthma",
+    "胃食道逆流": "gastroesophageal reflux disease",
 }
 
 NOISE_TERMS = {
@@ -128,13 +132,36 @@ KW_FIX2 = {
 }
 
 
+def facet_evidence_level(pairs: list[str], qtype: str) -> str:
+    pair_list = pairs or []
+    if qtype not in {"symptoms", "treatments"}:
+        return "strong"
+    if not pair_list:
+        return "none"
+
+    bag = " ".join(pair_list).lower()
+    hints = _SYM_HINTS if qtype == "symptoms" else _TRT_HINTS
+    has_hint = any(word in bag for word in hints)
+
+    if has_hint and len(pair_list) >= 2:
+        return "strong"
+
+    dedup_targets: list[str] = []
+    for pair_text in pair_list:
+        if "→" not in pair_text:
+            continue
+        _, target = pair_text.split("→", 1)
+        clean_target = target.strip().lower()
+        if clean_target and clean_target not in dedup_targets:
+            dedup_targets.append(clean_target)
+
+    if len(dedup_targets) >= 2 and len(pair_list) >= 4:
+        return "weak"
+    return "none"
+
+
 def has_facet_evidence(pairs: list[str], qtype: str) -> bool:
-    bag = " ".join(pairs).lower()
-    if qtype == "symptoms":
-        return any(w in bag for w in _SYM_HINTS)
-    if qtype == "treatments":
-        return any(w in bag for w in _TRT_HINTS)
-    return True
+    return facet_evidence_level(pairs, qtype) == "strong"
 
 
 def terms_to_regex(terms: list[str]) -> list[str]:
