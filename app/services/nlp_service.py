@@ -6,8 +6,15 @@ import difflib
 from repositories import neo4j_repository
 
 # ========== Load scispaCy model ==========
+MODEL_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "models"
+    / "en_core_sci_lg-0.5.4"
+    / "en_core_sci_lg"
+    / "en_core_sci_lg-0.5.4"
+)
 nlp = load_model_from_path(
-    Path("./models/en_core_sci_lg-0.5.4/en_core_sci_lg/en_core_sci_lg-0.5.4")
+    MODEL_PATH
 )
 
 # ========== Aliases for common terms ==========

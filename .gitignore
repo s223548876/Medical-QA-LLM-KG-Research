@@ -3,6 +3,7 @@
 !.env.example
 
 *.txt
+*.log
 *secret*
 *password*
 *apikey*
@@ -21,6 +22,8 @@ frontend/dist/
 # Large local model artifacts (exceeds GitHub file limit)
 app/models/
 .logs/
+.codex/
+neo4j/
 
 # Local experiment outputs / media (optional data, keep repo lightweight)
 8+8/

@@ -2,6 +2,7 @@
 import argparse
 import json
 import time
+import os
 import requests
 from bert_score import score
 
@@ -59,9 +60,15 @@ def iter_jsonl(path):
             yield json.loads(line)
 
 
-def call_api(base_url, endpoint, question, timeout=90):
+def call_api(base_url, endpoint, question, timeout=90, api_key=None):
     url = base_url.rstrip("/") + endpoint
-    r = requests.get(url, params={"question": question}, timeout=timeout)
+    headers = {"X-API-KEY": api_key} if api_key else None
+    r = requests.get(
+        url,
+        params={"question": question},
+        headers=headers,
+        timeout=timeout,
+    )
     r.raise_for_status()
     return r.json()
 
@@ -76,6 +83,7 @@ def main():
     ap.add_argument("--sleep", type=float, default=0.3)
     ap.add_argument("--timeout", type=int, default=90)
     ap.add_argument("--resp_key", default=None, help="指定回傳欄位（支援 a.b.0.c 路徑）")
+    ap.add_argument("--api_key", default=os.getenv("APP_API_KEY", ""), help="API key sent as X-API-KEY header")
     args = ap.parse_args()
 
     refs, hyps = [], []
@@ -87,7 +95,7 @@ def main():
             continue
         try:
             payload = call_api(args.base_url, args.endpoint,
-                               q, timeout=args.timeout)
+                               q, timeout=args.timeout, api_key=args.api_key)
         except Exception:
             payload = ""
         hyp = extract_text(payload, resp_key=args.resp_key)

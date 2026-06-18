@@ -17,6 +17,15 @@ export interface Answer {
 }
 
 interface KgResponse {
+  matched?: boolean;
+  similarity?: number;
+  message?: string;
+  answers?: {
+    a_label?: string;
+    a_text?: string;
+    b_label?: string;
+    b_text?: string;
+  };
   extracted_terms?: string[];
   debug?: Array<Record<string, unknown>>;
   mapped_to?: {
@@ -28,12 +37,6 @@ interface KgResponse {
     answer?: string;
     subgraph_summary?: string[];
     note?: string;
-  }>;
-}
-
-interface LlmOnlyResponse {
-  results?: Array<{
-    answer?: string;
   }>;
 }
 
@@ -87,22 +90,12 @@ function App() {
       if (queryType !== 'free') {
         kgUrl.searchParams.set('qtype', queryType);
       }
-      const llmUrl = new URL('/llm_only', `${config.apiBaseUrl}/`);
-      llmUrl.searchParams.set('question', queryText);
-
-      const [kgResp, llmResp] = await Promise.all([
-        fetch(kgUrl.toString(), { headers }),
-        fetch(llmUrl.toString(), { headers }),
-      ]);
+      const kgResp = await fetch(kgUrl.toString(), { headers });
 
       const kgData: KgResponse = await kgResp.json();
-      const llmData: LlmOnlyResponse = await llmResp.json();
 
       if (!kgResp.ok) {
         throw new Error(`KG request failed (${kgResp.status})`);
-      }
-      if (!llmResp.ok) {
-        throw new Error(`LLM request failed (${llmResp.status})`);
       }
 
       const mappedCode = kgData.mapped_to?.bank_id || '-';
@@ -110,25 +103,31 @@ function App() {
       const resultConcept = (kgData.results?.[0] as Record<string, unknown> | undefined)?.conceptId as string | undefined;
       const fallback = (kgData.results?.[0]?.note as string | undefined) ||
         (kgData.debug || []).find((d) => typeof d.fallback === 'string')?.fallback as string | undefined;
+      const summaryText = (kgData.results?.[0]?.subgraph_summary || []).join('；');
+      const llmOnlyText = kgData.answers?.b_text || '無資料';
+      const kgLlmText = kgData.answers?.a_text || kgData.results?.[0]?.answer || '無資料';
+      const matchedText = typeof kgData.matched === 'boolean' ? (kgData.matched ? '是' : '否') : '-';
+      const similarityText = typeof kgData.similarity === 'number' ? kgData.similarity.toFixed(3) : '-';
 
       const reasoningPath = [
         `1. 問題解析：${queryText}`,
         `2. 類型判定：${mappedFacet}`,
         `3. 概念映射：${mappedCode}`,
-        `4. 子圖檢索：${(kgData.results?.[0]?.subgraph_summary || []).length} 條摘要`,
-        fallback ? `5. Fallback：${fallback}` : '5. Fallback：無',
-        '6. 生成答案：知識圖譜 + LLM 與純 LLM 比較',
+        `4. 匹配結果：${matchedText}（相似度：${similarityText}）`,
+        `5. 子圖檢索：${(kgData.results?.[0]?.subgraph_summary || []).length} 條摘要`,
+        fallback ? `6. Fallback：${fallback}` : '6. Fallback：無',
+        '7. 生成答案：知識圖譜 + LLM 與純 LLM 比較',
       ];
 
       const uiAnswer: Answer = {
-        llmOnly: llmData.results?.[0]?.answer || '無資料',
-        kgLlm: kgData.results?.[0]?.answer || '無資料',
+        llmOnly: llmOnlyText,
+        kgLlm: kgLlmText,
         entities: kgData.extracted_terms || [],
         snomedConcepts: [
           { concept: 'Mapped Concept', code: String(mappedCode !== '-' ? mappedCode : resultConcept || '-') },
           { concept: 'Facet', code: String(mappedFacet) },
         ],
-        subgraphSummary: (kgData.results?.[0]?.subgraph_summary || []).join('；') || '無子圖摘要',
+        subgraphSummary: summaryText || kgData.message || '無子圖摘要',
         reasoningPath,
       };
 

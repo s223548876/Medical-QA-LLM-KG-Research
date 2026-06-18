@@ -4,17 +4,23 @@ import numpy as np
 
 # 四組比較：(資料集, 指標, 純LLM檔, v5c檔, 輸出delta分布檔名)
 pairs = [
-    ("105", "ROUGE-1", "res105_llm_only_rouge1_v5.csv", "res105_v5c_rouge1.csv", "ci_105_rouge1_delta.csv"),
-    ("105", "ROUGE-L", "res105_llm_only_rougel_v5.csv", "res105_v5c_rougel.csv", "ci_105_rougel_delta.csv"),
-    ("858", "ROUGE-1", "res969_llm_only_rouge1_v5c.csv", "res969_v5c_rouge1.csv", "ci_858_rouge1_delta.csv"),
-    ("858", "ROUGE-L", "res969_llm_only_rougel_v5c.csv", "res969_v5c_rougel.csv", "ci_858_rougel_delta.csv"),
+    ("105", "ROUGE-1", "res105_llm_only_rouge1_v5.csv",
+     "res105_llmkg_rouge1_v5c.csv", "ci_105_rouge1_delta.csv"),
+    ("105", "ROUGE-L", "res105_llm_only_rougel_v5.csv",
+     "res105_llmkg_rougel_v5c.csv", "ci_105_rougel_delta.csv"),
+    ("858", "ROUGE-1", "res969_llm_only_rouge1_v5c.csv",
+     "res969_llmkg_rouge1_v5c.csv", "ci_858_rouge1_delta.csv"),
+    ("858", "ROUGE-L", "res969_llm_only_rougel_v5c.csv",
+     "res969_llmkg_rougel_v5c.csv", "ci_858_rougel_delta.csv"),
 ]
+
 
 def bootstrap_ci(a_csv, b_csv, col="f1", n_boot=2000, seed=0):
     a = pd.read_csv(a_csv)[col].values
     b = pd.read_csv(b_csv)[col].values
     if len(a) != len(b):
-        raise ValueError(f"Length mismatch: {a_csv}({len(a)}) vs {b_csv}({len(b)})")
+        raise ValueError(
+            f"Length mismatch: {a_csv}({len(a)}) vs {b_csv}({len(b)})")
     rng = np.random.default_rng(seed)
     diffs = []
     n = len(a)
@@ -24,6 +30,7 @@ def bootstrap_ci(a_csv, b_csv, col="f1", n_boot=2000, seed=0):
     diffs = np.array(diffs)
     lo, hi = np.percentile(diffs, [2.5, 97.5])
     return float(diffs.mean()), float(lo), float(hi), diffs
+
 
 rows = []
 seed = 0
